@@ -12,8 +12,7 @@ env/
 
 # Compilación y paquetes
 build/
-dist/
-dist_old/
+dist*
 *.spec
 *.egg-info/
 
