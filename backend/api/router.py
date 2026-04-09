@@ -69,8 +69,86 @@ def get_dashboard_kpis(taller_id: int, db: Session = Depends(database.get_db)):
 def get_registros(taller_id: int, db: Session = Depends(database.get_db)):
     """Devuelve los últimos servicios para la tabla principal"""
     registros = db.query(models.Registro).filter(models.Registro.taller_id == taller_id).order_by(models.Registro.id.desc()).limit(50).all()
-    # Mapeo a lista de tuplas para retro-compatibilidad rápida con Tkinter TreeView
     return [
         (r.nombre_cliente, r.vehiculo, r.servicio, r.fecha_ingreso.strftime("%Y-%m-%d"), r.costo_proyectado, r.estado)
         for r in registros
     ]
+
+
+# ==========================================
+# ADMIN: GESTIÓN DE LICENCIAS (protegido)
+# ==========================================
+import uuid
+from fastapi import Header
+
+ADMIN_SECRET = "tallerpro-admin-2026"
+
+def _verificar_admin(x_admin_secret: str = Header(None)):
+    if x_admin_secret != ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+
+@router.post("/v1/admin/crear-taller")
+def admin_crear_taller(data: dict, db: Session = Depends(database.get_db),
+                       x_admin_secret: str = Header(None)):
+    _verificar_admin(x_admin_secret)
+    clave = str(uuid.uuid4())[:8].upper()
+    meses = data.get("meses", 1)
+    vencimiento = datetime.datetime.utcnow() + datetime.timedelta(days=30 * meses)
+    nuevo = models.Taller(
+        nombre=data.get("nombre", "Sin nombre"),
+        activation_key=clave,
+        fecha_vencimiento=vencimiento,
+        suscripcion_activa=True,
+        plan=data.get("plan", "Basico")
+    )
+    db.add(nuevo)
+    db.commit()
+    db.refresh(nuevo)
+    return {
+        "id": nuevo.id,
+        "nombre": nuevo.nombre,
+        "activation_key": clave,
+        "fecha_vencimiento": vencimiento.strftime("%d/%m/%Y"),
+        "plan": nuevo.plan
+    }
+
+@router.get("/v1/admin/talleres")
+def admin_listar_talleres(db: Session = Depends(database.get_db),
+                          x_admin_secret: str = Header(None)):
+    _verificar_admin(x_admin_secret)
+    talleres = db.query(models.Taller).all()
+    return [
+        {
+            "id": t.id,
+            "nombre": t.nombre,
+            "activation_key": t.activation_key,
+            "suscripcion_activa": t.suscripcion_activa,
+            "fecha_vencimiento": str(t.fecha_vencimiento) if t.fecha_vencimiento else None,
+            "plan": t.plan
+        }
+        for t in talleres
+    ]
+
+@router.post("/v1/admin/toggle-taller/{taller_id}")
+def admin_toggle_taller(taller_id: int, db: Session = Depends(database.get_db),
+                        x_admin_secret: str = Header(None)):
+    _verificar_admin(x_admin_secret)
+    t = db.query(models.Taller).filter(models.Taller.id == taller_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Taller no encontrado")
+    t.suscripcion_activa = not t.suscripcion_activa
+    db.commit()
+    return {"id": t.id, "nombre": t.nombre, "suscripcion_activa": t.suscripcion_activa}
+
+@router.post("/v1/admin/extender-taller/{taller_id}")
+def admin_extender_taller(taller_id: int, db: Session = Depends(database.get_db),
+                          x_admin_secret: str = Header(None)):
+    _verificar_admin(x_admin_secret)
+    t = db.query(models.Taller).filter(models.Taller.id == taller_id).first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Taller no encontrado")
+    if not t.fecha_vencimiento:
+        t.fecha_vencimiento = datetime.datetime.utcnow()
+    t.fecha_vencimiento += datetime.timedelta(days=30)
+    db.commit()
+    return {"id": t.id, "nombre": t.nombre, "fecha_vencimiento": str(t.fecha_vencimiento)}
