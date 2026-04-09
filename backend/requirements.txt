@@ -9,3 +9,4 @@ openai
 python-dotenv
 python-dateutil
 psycopg2-binary
+gunicorn
