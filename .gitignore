@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Base de datos
+*.db
+*.sqlite3
+
+# Compilación y paquetes
+build/
+dist/
+dist_old/
+*.spec
+*.egg-info/
+
+# Archivos de sistema y temporales
+.DS_Store
+Thumbs.db
+/tmp/
+*.log
+
+# OneDrive y otros
+Sync.db
+.gemini/
