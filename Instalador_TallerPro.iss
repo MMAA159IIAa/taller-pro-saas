@@ -31,8 +31,8 @@ Source: "icono.ico"; DestDir: "{app}"
 Name: "C:\TallerPro_Contador"; Permissions: users-modify
 
 [Icons]
-Name: "{autodesktop}\TallerPro"; Filename: "{app}\TallerPro.exe"; Tasks: desktopicon; IconFilename: "{app}\favicon.ico"
-Name: "{userstartup}\TallerPro"; Filename: "{app}\TallerPro.exe"; Tasks: startuponboot; IconFilename: "{app}\favicon.ico"
+Name: "{autodesktop}\TallerPro"; Filename: "{app}\TallerPro.exe"; Tasks: desktopicon; IconFilename: "{app}\icono.ico"
+Name: "{userstartup}\TallerPro"; Filename: "{app}\TallerPro.exe"; Tasks: startuponboot; IconFilename: "{app}\icono.ico"
 
 [Run]
 Filename: "{app}\TallerPro.exe"; Description: "Iniciar TallerPro ahora"; Flags: nowait postinstall skipifsilent
