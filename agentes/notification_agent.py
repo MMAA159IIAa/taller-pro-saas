@@ -4,6 +4,11 @@ from servicios.email_service import EmailService
 from servicios.whatsapp_service import WhatsAppService
 from servicios.recibo_generator import generar_recibo
 
+try:
+    from agentes.humanizador_agent import HumanizadorAgent
+except ImportError:
+    HumanizadorAgent = None
+
 class NotificationAgent(BaseAgent):
     """
     Monitorea cambios de estatus y envia notificaciones automaticas.
@@ -15,6 +20,7 @@ class NotificationAgent(BaseAgent):
         super().__init__("Notificador", intervalo_segundos)
         self.email     = EmailService()
         self.wa        = WhatsAppService()
+        self.humanizador = HumanizadorAgent() if HumanizadorAgent else None
 
     def ejecutar_tarea(self):
         self._revisar_listos()
@@ -45,7 +51,19 @@ class NotificationAgent(BaseAgent):
 
             # WhatsApp
             if telefono:
-                ok = self.wa.enviar_listo(nombre, telefono, auto, servicio, taller)
+                usar_ia = get_config("usar_ia_notificaciones", "0") == "1"
+                try:
+                    if usar_ia and self.humanizador:
+                        msg_ia = self.humanizador.redactar_notificacion_listo(nombre, auto, servicio)
+                        # Le concatenamos la firma obligatoria
+                        msg_ia += f"\n\n_{taller}_"
+                        ok = self.wa.enviar(telefono, msg_ia)
+                    else:
+                        ok = self.wa.enviar_listo(nombre, telefono, auto, servicio, taller)
+                except Exception as e:
+                    self.log(f"Fallo IA en WhatsApp Listo {nombre}, usando fallback: {e}")
+                    ok = self.wa.enviar_listo(nombre, telefono, auto, servicio, taller)
+                    
                 if ok:
                     enviado = True
                     self.log(f"WhatsApp enviado: {nombre} — {auto} listo")
@@ -83,7 +101,18 @@ class NotificationAgent(BaseAgent):
 
             # WhatsApp de confirmacion de entrega
             if telefono:
-                ok = self.wa.enviar_recibo(nombre, telefono, auto, servicio, costo or 0, taller)
+                usar_ia = get_config("usar_ia_notificaciones", "0") == "1"
+                try:
+                    if usar_ia and self.humanizador:
+                        msg_ia = self.humanizador.redactar_notificacion_entregado(nombre, auto, servicio, costo)
+                        msg_ia += f"\n\n_{taller}_"
+                        ok = self.wa.enviar(telefono, msg_ia)
+                    else:
+                        ok = self.wa.enviar_recibo(nombre, telefono, auto, servicio, costo or 0, taller)
+                except Exception as e:
+                    self.log(f"Fallo IA en WhatsApp Entregado {nombre}, usando fallback: {e}")
+                    ok = self.wa.enviar_recibo(nombre, telefono, auto, servicio, costo or 0, taller)
+
                 if ok:
                     enviado = True
                     self.log(f"WhatsApp entrega enviado a: {nombre}")

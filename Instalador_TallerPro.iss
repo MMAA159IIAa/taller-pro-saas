@@ -24,8 +24,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "startuponboot"; Description: "Garantizar que TallerPro inicie con Windows (Recomendado)"; GroupDescription: "Arranque Automático:"
 
 [Files]
-Source: "dist\TallerPro\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "dist\TallerPro\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\TallerPro.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "icono.ico"; DestDir: "{app}"
 
 [Dirs]

@@ -38,6 +38,12 @@ class Taller(TallerBase):
 class LicenseCheck(BaseModel):
     taller_id: int
     taller_name: str
-    status: str # activo, suspendido
+    status: str # activo, suspendido, limite_alcanzado
     mensaje: str
     fecha_vencimiento: Optional[datetime] = None
+    hw_id: Optional[str] = None
+
+class DispositivoBase(BaseModel):
+    hw_id: str
+    nombre_pc: str
+    taller_id: int

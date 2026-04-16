@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TallerPro - Panel Maestro SaaS</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0f172a;
+            --bg-card: rgba(30, 41, 59, 0.7);
+            --accent: #38bdf8;
+            --accent-dark: #0284c7;
+            --text: #f1f5f9;
+            --text-muted: #94a3b8;
+            --danger: #ef4444;
+            --success: #22c55e;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
+        * { margin: 0; padding: 0; box-box: border-box; }
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 40px;
+        }
+
+        .container { max-width: 1200px; margin: 0 auto; }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 40px;
+            background: var(--bg-card);
+            padding: 20px 30px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+        }
+
+        h1 { font-size: 24px; font-weight: 600; color: var(--accent); letter-spacing: 1px; }
+
+        .btn {
+            background: var(--accent);
+            color: var(--bg-dark);
+            padding: 10px 20px;
+            border-radius: 10px;
+            text-decoration: none;
+            font-weight: 600;
+            border: none;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn:hover { background: var(--accent-dark); transform: scale(1.05); }
+        .btn-danger { background: var(--danger); color: white; }
+        .btn-danger:hover { background: #dc2626; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 25px;
+            transition: transform 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+        .card:hover { transform: translateY(-5px); border-color: var(--accent); }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 20px;
+        }
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .badge-active { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+        .badge-inactive { background: rgba(239, 68, 68, 0.2); color: var(--danger); }
+
+        .taller-name { font-size: 20px; font-weight: 600; margin-bottom: 5px; }
+        .taller-key { border: 1px dashed var(--accent); padding: 5px 10px; border-radius: 8px; font-family: monospace; font-size: 14px; color: var(--accent); }
+
+        .pc-list { margin-top: 20px; border-top: 1px solid var(--border); padding-top: 15px; }
+        .pc-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 13px;
+            padding: 5px 10px;
+            background: rgba(255,255,255,0.02);
+            border-radius: 8px;
+        }
+        .pc-info { display: flex; align-items: center; gap: 10px; }
+        .pc-status { width: 8px; height: 8px; border-radius: 50%; }
+        .online { background: var(--success); box-shadow: 0 0 10px var(--success); }
+        
+        .btn-mini {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+        .btn-mini:hover { background: var(--danger); color: white; }
+
+        .modal {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        .modal-content {
+            background: var(--bg-dark);
+            padding: 40px;
+            border-radius: 20px;
+            width: 400px;
+            border: 1px solid var(--accent);
+        }
+        input, select {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0 20px 0;
+            background: rgba(255,255,255,0.05);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: white;
+            outline: none;
+        }
+        input:focus { border-color: var(--accent); }
+
+        /* Loading */
+        .loader { width: 48px; height: 48px; border: 5px solid #FFF; border-bottom-color: var(--accent); border-radius: 50%; display: inline-block; animation: rotation 1s linear infinite; }
+        @keyframes rotation { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>TALLERPRO <span>MAESTRO</span></h1>
+            <button class="btn" onclick="openModal()">+ Nueva Licencia</button>
+        </header>
+
+        <div id="loading" style="text-align: center; margin-top: 100px;">
+            <span class="loader"></span>
+            <p style="margin-top: 20px; color: var(--text-muted);">Consultando red SaaS...</p>
+        </div>
+
+        <div class="grid" id="talleres-grid">
+            <!-- Dinámico -->
+        </div>
+    </div>
+
+    <!-- Modal Nuevo Taller -->
+    <div class="modal" id="modal">
+        <div class="modal-content">
+            <h2 style="margin-bottom: 20px;">Generador de Licencia</h2>
+            <label>Nombre del Taller</label>
+            <input type="text" id="nombre" placeholder="Ej: Taller Mecanico Express">
+            
+            <label>Tipo de Plan</label>
+            <select id="plan">
+                <option value="Basico">Plan Básico (1 PC)</option>
+                <option value="Pro">Plan Pro (5 PCs)</option>
+            </select>
+            
+            <label>Meses de Suscripción</label>
+            <input type="number" id="meses" value="1">
+
+            <div style="display: flex; gap: 10px;">
+                <button class="btn" style="flex: 1;" onclick="crearTaller()">Crear Activar</button>
+                <button class="btn btn-danger" onclick="closeModal()">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = ""; // En local se asume la misma URL
+        const ADMIN_SECRET = "tallerpro-admin-2026";
+
+        async function fetchTalleres() {
+            try {
+                const resp = await fetch('/api/v1/admin/talleres', {
+                    headers: { 'X-Admin-Secret': ADMIN_SECRET }
+                });
+                const talleres = await resp.json();
+                renderTalleres(talleres);
+            } catch (e) {
+                console.error(e);
+            } finally {
+                document.getElementById('loading').style.display = 'none';
+            }
+        }
+
+        async function toggleTaller(id) {
+            await fetch(`/api/v1/admin/toggle-taller/${id}`, {
+                method: 'POST',
+                headers: { 'X-Admin-Secret': ADMIN_SECRET }
+            });
+            fetchTalleres();
+        }
+
+        async function crearTaller() {
+            const nombre = document.getElementById('nombre').value;
+            const plan = document.getElementById('plan').value;
+            const meses = parseInt(document.getElementById('meses').value);
+
+            await fetch('/api/v1/admin/crear-taller', {
+                method: 'POST',
+                headers: { 
+                    'X-Admin-Secret': ADMIN_SECRET,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ nombre, plan, meses })
+            });
+            closeModal();
+            fetchTalleres();
+        }
+
+        function renderTalleres(talleres) {
+            const grid = document.getElementById('talleres-grid');
+            grid.innerHTML = '';
+            
+            talleres.forEach(t => {
+                const statusClass = t.suscripcion_activa ? 'badge-active' : 'badge-inactive';
+                const statusText = t.suscripcion_activa ? 'Activo' : 'Suspendido';
+                const btnText = t.suscripcion_activa ? 'Suspender' : 'Activar';
+
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.innerHTML = `
+                    <div class="card-header">
+                        <div>
+                            <div class="taller-name">${t.nombre}</div>
+                            <span class="badge ${statusClass}">${statusText}</span>
+                            <span class="badge" style="background: rgba(255,255,255,0.05)">${t.plan}</span>
+                        </div>
+                        <button class="btn ${t.suscripcion_activa ? 'btn-danger' : ''}" onclick="toggleTaller(${t.id})">
+                            ${btnText}
+                        </button>
+                    </div>
+                    <div>
+                        <span class="text-muted" style="font-size: 12px;">CLAVE MAESTRA:</span><br>
+                        <span class="taller-key">${t.activation_key}</span>
+                    </div>
+                    <div class="pc-list">
+                        <strong style="font-size: 13px; color: var(--accent);">Computadoras Detectadas:</strong>
+                        <div id="pcs-${t.id}" style="margin-top:10px;">
+                            <p style="font-size:12px; color:var(--text-muted);">Buscando señales...</p>
+                        </div>
+                    </div>
+                `;
+                grid.appendChild(card);
+                fetchPCS(t.id);
+            });
+        }
+
+        async function fetchPCS(tallerId) {
+            try {
+                const resp = await fetch(`/api/v1/admin/dispositivos/${tallerId}`, {
+                    headers: { 'X-Admin-Secret': ADMIN_SECRET }
+                });
+                const pcs = await resp.json();
+                const container = document.getElementById(`pcs-${tallerId}`);
+                if (pcs.length === 0) {
+                    container.innerHTML = '<p style="font-size:12px; color:var(--text-muted);">Ninguna PC detectada aún.</p>';
+                    return;
+                }
+                container.innerHTML = pcs.map(pc => `
+                    <div class="pc-item">
+                        <div class="pc-info">
+                            <div class="pc-status online"></div>
+                            <span>${pc.nombre_pc} <small style="color:var(--text-muted)">(${pc.hw_id})</small></span>
+                        </div>
+                        <button class="btn-mini" onclick="borrarPC(${pc.id}, ${tallerId})">ELIMINAR PC</button>
+                    </div>
+                `).join('');
+            } catch(e) {}
+        }
+
+        async function borrarPC(id, tallerId) {
+            if(!confirm('¿Seguro que quieres soltar esta PC? Se podrá volver a vincular abriendo el programa.')) return;
+            await fetch(`/api/v1/admin/dispositivo/${id}`, {
+                method: 'DELETE',
+                headers: { 'X-Admin-Secret': ADMIN_SECRET }
+            });
+            fetchPCS(tallerId);
+        }
+
+        function openModal() { document.getElementById('modal').style.display = 'flex'; }
+        function closeModal() { document.getElementById('modal').style.display = 'none'; }
+
+        fetchTalleres();
+    </script>
+</body>
+</html>

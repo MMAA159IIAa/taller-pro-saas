@@ -13,13 +13,6 @@ from email.mime.multipart import MIMEMultipart
 import openpyxl
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.chart import BarChart, Reference
-try:
-    import requests
-except ImportError:
-    requests = None
-
-# URL del servidor SaaS central - PRODUCCIÓN EN RENDER 🌍
-API_BASE_URL = "https://taller-pro-saas.onrender.com"
 
 # ── Agentes y servicios ───────────────────────────────────────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -31,6 +24,9 @@ try:
     from agentes.lead_detective_agent import LeadDetectiveAgent
     from agentes.auto_sync_agent import iniciar_agente_en_background
     from utils.database import crear_tablas as _crear_tablas_ext, get_config, set_config
+    from utils.license_utils import verificar_licencia_remota, activar_licencia_remota, obtener_hw_id
+    import threading
+    import time
     AGENTES_OK = True
 except ImportError as _e:
     AGENTES_OK = False
@@ -76,7 +72,8 @@ def crear_tablas():
         estatus TEXT DEFAULT 'Pendiente')""")
     c.execute("""CREATE TABLE IF NOT EXISTS finanzas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        tipo TEXT, concepto TEXT, monto REAL, fecha TEXT, notas TEXT)""")
+        tipo TEXT, concepto TEXT, monto REAL, fecha TEXT, notas TEXT,
+        hash_duplicado TEXT UNIQUE)""")
     c.execute("""CREATE TABLE IF NOT EXISTS config (
         clave TEXT PRIMARY KEY, valor TEXT)""")
     conn.commit()
@@ -108,15 +105,41 @@ class TallerPro(tk.Tk):
             if os.path.exists(ico):
                 self.iconbitmap(ico)
         except: pass
-        crear_tablas()
         if AGENTES_OK:
             _crear_tablas_ext()
+
         self._build_ui()
         self.actualizar_dashboard()
         if AGENTES_OK:
             self._iniciar_agentes()
+        
+        # Iniciar Latido (Heartbeat) para el Panel Maestro SaaS
+        self.stop_heartbeat = threading.Event()
+        self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self.heartbeat_thread.start()
+
+    def _heartbeat_loop(self):
+        """Revisión de seguridad remota cada 2 minutos"""
+        while not self.stop_heartbeat.is_set():
+            t_id = get_config("taller_id")
+            if t_id:
+                status = verificar_licencia_remota(t_id)
+                # Si el administrador nos suspendió remotamente, bloqueamos el programa de inmediato
+                if status.get("status") == "suspendido":
+                    print("[SaaS] BLOQUEO REMOTO ACTIVADO")
+                    self.after(0, self._forzar_bloqueo, status.get("mensaje"))
+                    break
+            time.sleep(120)
+
+    def _forzar_bloqueo(self, mensaje):
+        """Muestra la ventana de bloqueo y detiene el programa"""
+        self.withdraw() # Ocultar ventana principal
+        v_lic = VentanaLicencia(mensaje)
+        v_lic.mainloop()
+        self.quit() # Al cerrar la de licencia, cerramos todo
 
     def _iniciar_agentes(self):
+        if not AGENTES_OK: return
         self.notif_agent   = NotificationAgent(intervalo_segundos=30)
         self.sales_agent   = SalesAgent(intervalo_horas=24)
         self.finance_agent = FinanceImportAgent()
@@ -440,7 +463,12 @@ class FrameClientes(tk.Frame):
                     servicio = str(fila[7] if len(fila) > 7 else "")
                     fecha    = str(fila[8] if len(fila) > 8 else datetime.now().strftime("%Y-%m-%d"))
                     costo    = float(fila[9]) if len(fila) > 9 and fila[9] else 0.0
-                    estatus  = str(fila[10] if len(fila) > 10 else "Pendiente")
+                    # Blindaje anti-duplicados
+                    if num_eco:
+                        existe = conn.execute("SELECT id FROM registros WHERE numero_economico=?", (num_eco,)).fetchone()
+                        if existe:
+                            continue
+
                     conn.execute("""INSERT INTO registros
                         (nombre,telefono,correo,auto,numero_economico,placas,servicio,fecha,costo,estatus)
                         VALUES (?,?,?,?,?,?,?,?,?,?)""",
@@ -964,39 +992,120 @@ class FrameAgentes(tk.Frame):
         super().__init__(parent, bg=BG_DARK)
         self.app = app
         self._build()
+        self._actualizar_status()
 
     def _build(self):
         top = tk.Frame(self, bg=BG_DARK, padx=25, pady=14)
         top.pack(fill="x")
-        tk.Label(top, text="Agentes IA", bg=BG_DARK, fg=TEXT_PRIMARY, font=FONT_TITLE).pack(side="left")
+        tk.Label(top, text="Agentes IA", bg=BG_DARK, fg=TEXT_PRIMARY,
+                 font=FONT_TITLE).pack(side="left")
+        boton(top, "Actualizar", self._actualizar_status,
+              color=BG_INPUT, texto_color=TEXT_PRIMARY, w=12).pack(side="right")
 
-        content = tk.Frame(self, bg=BG_DARK, padx=25)
-        content.pack(fill="both", expand=True)
+        # Panel de status en tiempo real
+        status_frame = tk.Frame(self, bg=BG_DARK, padx=25)
+        status_frame.pack(fill="x")
 
-        agentes_info = [
-            ("Agente de Notificaciones", 
-             "Detecta cambios de estatus y envia correos automaticamente.\nListo → notifica al cliente.\nEntregado → genera y envia recibo PDF.",
-             ACCENT),
-            ("Agente de Seguimiento (Ventas)",
-             "Detecta clientes con servicio vencido +6 meses\ny envia mensajes de seguimiento automaticos.",
-             SUCCESS),
-            ("Agente de Importacion Financiera",
-             "Importa archivos Excel/CSV del contador\nDetecta ingresos y egresos automaticamente.\nValida duplicados.",
-             "#2980b9"),
+        self.agentes_defs = [
+            ("notif_agent",   "Agente Notificaciones",   "Correo + WhatsApp cuando cambia estatus", ACCENT),
+            ("sales_agent",   "Agente Seguimiento",      "Clientes vencidos +6 meses",              SUCCESS),
+            ("lead_agent",    "Agente Detective Leads",  "Detecta oportunidades de venta",          "#9b59b6"),
+            ("finance_agent", "Agente Finanzas",         "Importacion automatica de Excel",         "#2980b9"),
+            ("auto_sync",     "Agente AutoSync Contador","Vigila C:\\TallerPro_Contador",          "#e67e22"),
         ]
 
-        for titulo, desc, color in agentes_info:
-            card = tk.Frame(content, bg=BG_CARD, padx=20, pady=15,
+        self.status_labels = {}
+        for key, titulo, desc, color in self.agentes_defs:
+            card = tk.Frame(status_frame, bg=BG_CARD, padx=20, pady=12,
                             highlightthickness=1, highlightbackground=BORDER)
-            card.pack(fill="x", pady=8)
-            header = tk.Frame(card, bg=BG_CARD)
-            header.pack(fill="x")
-            tk.Label(header, text="●", bg=BG_CARD, fg=SUCCESS,
-                     font=("Segoe UI",14)).pack(side="left")
-            tk.Label(header, text=f"  {titulo}", bg=BG_CARD, fg=color,
+            card.pack(fill="x", pady=4)
+            row = tk.Frame(card, bg=BG_CARD)
+            row.pack(fill="x")
+            self.status_labels[key] = tk.Label(row, text="●", bg=BG_CARD,
+                                                fg=TEXT_MUTED, font=("Segoe UI",16))
+            self.status_labels[key].pack(side="left")
+            tk.Label(row, text=f"  {titulo}", bg=BG_CARD, fg=color,
                      font=FONT_HEADER).pack(side="left")
             tk.Label(card, text=desc, bg=BG_CARD, fg=TEXT_MUTED,
-                     font=FONT_SMALL, justify="left").pack(anchor="w", pady=6)
+                     font=FONT_SMALL).pack(anchor="w", pady=2)
+
+        # Importar Excel del contador
+        content = tk.Frame(self, bg=BG_DARK, padx=25, pady=5)
+        content.pack(fill="x")
+
+        imp_frame = tk.Frame(content, bg=BG_CARD, padx=20, pady=15,
+                             highlightthickness=1, highlightbackground=BORDER)
+        imp_frame.pack(fill="x", pady=4)
+        tk.Label(imp_frame, text="Importar Excel del Contador (4 tabs)", bg=BG_CARD,
+                 fg=ACCENT, font=FONT_HEADER).pack(anchor="w")
+        tk.Label(imp_frame, text="Lee: Relacion de Carros, Informe Diario, Mano de Obra y Nomina",
+                 bg=BG_CARD, fg=TEXT_MUTED, font=FONT_SMALL).pack(anchor="w", pady=4)
+        boton(imp_frame, "Importar Excel Contador", self.importar_excel_contador,
+              color=ACCENT, w=22).pack(anchor="w", pady=6)
+
+        # Carpeta AutoSync
+        sync_frame = tk.Frame(content, bg=BG_CARD, padx=20, pady=15,
+                              highlightthickness=1, highlightbackground=BORDER)
+        sync_frame.pack(fill="x", pady=4)
+        tk.Label(sync_frame, text="Carpeta Magica del Contador", bg=BG_CARD,
+                 fg="#e67e22", font=FONT_HEADER).pack(anchor="w")
+        tk.Label(sync_frame,
+                 text="El contador solo arrastra su Excel a C:\\TallerPro_Contador\n"
+                      "y el sistema lo importa automaticamente sin hacer nada.",
+                 bg=BG_CARD, fg=TEXT_MUTED, font=FONT_SMALL, justify="left").pack(anchor="w", pady=4)
+        boton(sync_frame, "Activar Vigilancia", self.activar_vigilancia,
+              color="#e67e22", texto_color=TEXT_PRIMARY, w=18).pack(anchor="w", pady=6)
+
+        # Logs en tiempo real
+        log_frame = tk.Frame(self, bg=BG_DARK, padx=25, pady=5)
+        log_frame.pack(fill="both", expand=True)
+        tk.Label(log_frame, text="Actividad Reciente de Agentes", bg=BG_DARK,
+                 fg=TEXT_PRIMARY, font=FONT_HEADER).pack(anchor="w")
+        self.log_text = tk.Text(log_frame, bg=BG_CARD, fg=TEXT_PRIMARY,
+                                 font=FONT_SMALL, height=8, state="disabled", bd=0)
+        self.log_text.pack(fill="both", expand=True)
+        self.log_text.tag_config("INFO",  foreground=SUCCESS)
+        self.log_text.tag_config("ERROR", foreground=DANGER)
+        self.log_text.tag_config("WARN",  foreground=ACCENT)
+
+    def _actualizar_status(self):
+        if not AGENTES_OK: return
+        agente_objs = {
+            "notif_agent":   getattr(self.app, "notif_agent", None),
+            "sales_agent":   getattr(self.app, "sales_agent", None),
+            "lead_agent":    getattr(self.app, "lead_agent", None),
+            "finance_agent": getattr(self.app, "finance_agent", None),
+            "auto_sync":     getattr(self.app, "auto_sync", None),
+        }
+        for key, agente in agente_objs.items():
+            if key in self.status_labels:
+                activo = False
+                if agente:
+                    activo = getattr(agente, "activo", False) or getattr(agente, "en_ejecucion", False)
+                color = SUCCESS if activo else DANGER
+                self.status_labels[key].config(fg=color)
+
+        # Cargar logs recientes
+        try:
+            conn = conectar()
+            logs = conn.execute(
+                "SELECT fecha, nivel, agente, mensaje FROM agentes_logs ORDER BY id DESC LIMIT 30"
+            ).fetchall()
+            conn.close()
+            self.log_text.config(state="normal")
+            self.log_text.delete("1.0", "end")
+            for fecha, nivel, agente, msg in reversed(logs):
+                tag = nivel if nivel in ("INFO","ERROR","WARN") else ""
+                self.log_text.insert("end", f"[{fecha}] [{agente}] {msg}\n", tag)
+            self.log_text.config(state="disabled")
+            self.log_text.see("end")
+        except: pass
+
+        # Auto-refresh cada 5 segundos
+        self.after(5000, self._actualizar_status)
+
+    def on_show(self):
+        self._actualizar_status()
 
         # Importar Excel contador
         imp_frame = tk.Frame(content, bg=BG_CARD, padx=20, pady=15,
@@ -1278,56 +1387,15 @@ if __name__ == "__main__":
                 self.lbl_error.config(text="Usuario o contrasena incorrectos")
                 self.entry_pass.delete(0, "end")
 
-    crear_tablas()
-    if AGENTES_OK:
-        _crear_tablas_ext()
-
-    # ─── FLUJO SaaS: Verificar Activación ─────────────────────────────────────
-    def _verificar_activacion_local():
-        """Revisa si el sistema ya fue activado (clave guardada en DB local)."""
-        conn = conectar()
-        row = conn.execute("SELECT valor FROM config WHERE clave='taller_id'").fetchone()
-        conn.close()
-        return row is not None and row[0]
-
-    def _activar_con_servidor(clave):
-        """Intenta activar contra el servidor central."""
-        if requests is None:
-            return False, "Módulo 'requests' no disponible."
-        try:
-            resp = requests.post(
-                f"{API_BASE_URL}/api/v1/license/activate",
-                json={"activation_key": clave},
-                timeout=10
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                conn = conectar()
-                conn.execute("INSERT OR REPLACE INTO config (clave,valor) VALUES ('taller_id',?)", (str(data.get("taller_id", "")),))
-                conn.execute("INSERT OR REPLACE INTO config (clave,valor) VALUES ('taller_nombre',?)", (data.get("nombre", ""),))
-                conn.execute("INSERT OR REPLACE INTO config (clave,valor) VALUES ('fecha_vencimiento',?)", (str(data.get("fecha_vencimiento", "")),))
-                conn.execute("INSERT OR REPLACE INTO config (clave,valor) VALUES ('activation_key',?)", (clave,))
-                conn.commit()
-                conn.close()
-                return True, data
-            else:
-                try:
-                    msg = resp.json().get("detail", "Clave inválida")
-                except:
-                    msg = "Clave inválida o servidor no disponible"
-                return False, msg
-        except Exception as ex:
-            return False, f"Error de conexión: {ex}"
-
-    class FormularioActivacion(tk.Tk):
-        def __init__(self):
+    class VentanaLicencia(tk.Tk):
+        """Bloqueo de seguridad SaaS que pide activación si no hay licencia"""
+        def __init__(self, mensaje="Acceso Restringido"):
             super().__init__()
-            self.title("Activación de Producto - TallerPro")
-            self.geometry("480x340")
+            self.title("TallerPro - Activacion")
+            self.geometry("450x550")
             self.configure(bg=BG_DARK)
-            self.resizable(False, False)
-            self.protocol("WM_DELETE_WINDOW", sys.exit)
             self.resultado = False
+            self.mensaje = mensaje
             self._build()
             try:
                 ico = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icono.ico")
@@ -1335,57 +1403,75 @@ if __name__ == "__main__":
             except: pass
 
         def _build(self):
-            tk.Label(self, text="🔑 ACTIVAR TALLER PRO", bg=BG_DARK, fg=ACCENT,
-                     font=("Segoe UI", 18, "bold")).pack(pady=(35, 5))
-            tk.Label(self, text="Ingresa la llave de activación que te proporcionó TallerPro.",
-                     bg=BG_DARK, fg=TEXT_MUTED, font=FONT_SMALL,
-                     wraplength=400, justify="center").pack(pady=(0, 20))
-            frame = tk.Frame(self, bg=BG_DARK, padx=60)
-            frame.pack(fill="x")
-            tk.Label(frame, text="Llave de Activación", bg=BG_DARK,
-                     fg=TEXT_MUTED, font=FONT_SMALL).pack(anchor="w")
-            self.entry_clave = tk.Entry(frame, bg=BG_INPUT, fg=ACCENT,
-                                        font=("Segoe UI", 14, "bold"), bd=0,
-                                        insertbackground=ACCENT, justify="center")
-            self.entry_clave.config(highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT)
-            self.entry_clave.pack(fill="x", ipady=10, pady=(4, 15))
-            self.entry_clave.bind("<Return>", lambda e: self.activar())
-            self.lbl_error = tk.Label(frame, text="", bg=BG_DARK, fg=DANGER, font=FONT_SMALL)
-            self.lbl_error.pack()
-            tk.Button(frame, text="ACTIVAR SISTEMA", command=self.activar,
-                      bg=ACCENT, fg=BG_DARK, font=FONT_HEADER, bd=0, relief="flat",
-                      padx=20, pady=12, cursor="hand2",
-                      activebackground=ACCENT_DARK).pack(fill="x", pady=10)
+            self.protocol("WM_DELETE_WINDOW", lambda: None) # Impedir cierre manual
+            tk.Label(self, text="🔒 TALLERPRO SAAS", bg=BG_DARK, fg=DANGER,
+                     font=("Segoe UI", 20, "bold")).pack(pady=(40, 10))
+            
+            frame = tk.Frame(self, bg=BG_CARD, padx=30, pady=25, highlightthickness=1, highlightbackground=DANGER)
+            frame.pack(pady=20, fill="x", padx=40)
+            
+            tk.Label(frame, text=self.mensaje, bg=BG_CARD, fg=TEXT_PRIMARY, font=FONT_HEADER, wraplength=320, justify="center").pack()
+            tk.Label(frame, text=f"ID Hardware: {obtener_hw_id()}", bg=BG_CARD, fg=TEXT_MUTED, font=FONT_SMALL).pack(pady=(15,0))
+
+            tk.Label(self, text="Clave de Activacion:", bg=BG_DARK, fg=TEXT_MUTED, font=FONT_SMALL).pack(pady=(20,0))
+            self.ent_key = entrada(self, width=35)
+            self.ent_key.pack(pady=10, ipady=5)
+            
+            boton(self, "Activar Sistema", self.activar, w=22).pack(pady=20)
+            boton(self, "Salir", self.quit, color=BG_INPUT, texto_color=TEXT_PRIMARY, w=22).pack()
+            
+            tk.Label(self, text="Soporte: admin@tallerpro.tech", bg=BG_DARK, fg=TEXT_MUTED, font=("Segoe UI", 8)).pack(side="bottom", pady=15)
 
         def activar(self):
-            clave = self.entry_clave.get().strip().upper()
-            if not clave:
-                self.lbl_error.config(text="Por favor ingresa tu llave de activación")
-                return
-            self.lbl_error.config(text="Verificando con el servidor...")
-            self.update()
-            ok, datos = _activar_con_servidor(clave)
-            if ok:
-                nombre = datos.get("nombre", "Tu Taller") if isinstance(datos, dict) else ""
-                messagebox.showinfo("✅ Sistema Activado",
-                    f"¡Bienvenido, {nombre}!\nTu sistema ha sido activado correctamente.")
+            key = self.ent_key.get().strip()
+            if not key: return
+            res = activar_licencia_remota(key)
+            if res.get("status") == "activo":
+                set_config("taller_id", str(res["taller_id"]))
+                set_config("taller_nombre", res["taller_name"])
+                messagebox.showinfo("EXITO", f"Sistema Activado: {res['taller_name']}")
                 self.resultado = True
                 self.destroy()
             else:
-                self.lbl_error.config(text=str(datos))
-                self.entry_clave.delete(0, "end")
+                messagebox.showerror("Error", res.get("mensaje", "Clave invalida o limite alcanzado"))
 
-    # Mostrar activación solo si no está activado
-    if not _verificar_activacion_local():
-        ac = FormularioActivacion()
-        ac.mainloop()
-        if not ac.resultado:
-            sys.exit(0)
+    crear_tablas()
+    if AGENTES_OK:
+        _crear_tablas_ext()
 
-    # ─── Login de Administrador ────────────────────────────────────────────────
-    login = LoginWindow()
-    login.mainloop()
+    # ==========================================
+    # 🏁 FLUJO DE ARRANQUE SAAS (SHIELD)
+    # ==========================================
+    def validar_antes_de_abrir():
+        t_id = get_config("taller_id")
+        print(f"\n[🛡️ SHIELD] Iniciando validacion SaaS...")
+        print(f"[🛡️ SHIELD] Taller ID local: {t_id}")
+        
+        if not t_id:
+            print("[🛡️ SHIELD] No hay licencia. Abriendo Ventana de Activacion...")
+            v_lic = VentanaLicencia("Bienvenido. Activa tu instalacion de TallerPro para comenzar.")
+            v_lic.mainloop()
+            return v_lic.resultado
+        
+        print(f"[🛡️ SHIELD] Consultando servidor central para ID: {t_id}...")
+        status = verificar_licencia_remota(t_id)
+        print(f"[🛡️ SHIELD] Respuesta Servidor: {status}")
 
-    if login.resultado:
-        app = TallerPro()
-        app.mainloop()
+        if status.get("status") != "activo":
+            msg = status.get("mensaje", "Licencia Suspendida o Invalida.")
+            print(f"[🛡️ SHIELD] ACCESO DENEGADO: {msg}")
+            v_lic = VentanaLicencia(msg)
+            v_lic.mainloop()
+            return v_lic.resultado
+        
+        print(f"[🛡️ SHIELD] ACCESO CONCEDIDO. Bienvenido {status.get('taller_name')}")
+        return True
+
+    # Solo si el escudo SaaS da luz verde, procedemos al Login
+    if validar_antes_de_abrir():
+        login = LoginWindow()
+        login.mainloop()
+
+        if login.resultado:
+            app = TallerPro()
+            app.mainloop()

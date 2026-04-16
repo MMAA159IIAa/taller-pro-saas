@@ -40,15 +40,23 @@ def crear_tablas():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cliente_id INTEGER, fecha_envio TEXT,
         tipo TEXT, mensaje TEXT)""")
-    # --- TABLAS PARA AGENTES AUTÓNOMOS ---
-    c.execute("""CREATE TABLE IF NOT EXISTS agentes_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        agente TEXT, mensaje TEXT, fecha TEXT, nivel TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS agentes_status (
-        clave TEXT PRIMARY KEY, activo INTEGER DEFAULT 0, ultima_actividad TEXT)""")
-    c.execute("""CREATE TABLE IF NOT EXISTS prospectos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        nombre TEXT, auto TEXT, interes TEXT, estatus TEXT DEFAULT 'Nuevo', fecha TEXT)""")
+
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS agentes_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agente TEXT, mensaje TEXT, fecha TEXT, nivel TEXT)
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS agentes_status (
+            clave TEXT PRIMARY KEY, activo INTEGER,
+            ultima_actividad TEXT)
+    """)
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS prospectos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT, auto TEXT, interes TEXT,
+            fecha TEXT, estatus TEXT DEFAULT 'Nuevo')
+    """)
     conn.commit()
     conn.close()
 

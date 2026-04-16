@@ -17,6 +17,18 @@ class Taller(Base):
     empleados = relationship("Empleado", back_populates="taller")
     registros = relationship("Registro", back_populates="taller")
     finanzas = relationship("Finanzas", back_populates="taller")
+    dispositivos = relationship("Dispositivo", back_populates="taller")
+
+class Dispositivo(Base):
+    __tablename__ = "dispositivos"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    taller_id = Column(Integer, ForeignKey("talleres.id"))
+    hw_id = Column(String, unique=True, index=True) # Serial del disco / Machine GUID
+    nombre_pc = Column(String)
+    ultima_conexion = Column(DateTime, default=datetime.datetime.utcnow)
+    
+    taller = relationship("Taller", back_populates="dispositivos")
 
 class Empleado(Base):
     __tablename__ = "empleados"

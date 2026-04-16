@@ -10,6 +10,71 @@ from schemas import schemas
 router = APIRouter()
 
 # ==========================================
+# 🛑 VALIDACIÓN SaaS (Escudo Oficial) - PRIORIDAD 1
+# ==========================================
+@router.get("/v1/license/check/{taller_id}")
+def check_license(taller_id: int, hw_id: str, pc_name: str = "Desconocido", db: Session = Depends(database.get_db)):
+    """Validación del .exe con transferencia automática de dueño si la PC cambia de licencia"""
+    print(f"\n[🛡️ SaaS] CONSULTA DE LICENCIA Recibida -> Taller ID: {taller_id} | HW_ID: {hw_id}")
+    taller = db.query(models.Taller).filter(models.Taller.id == taller_id).first()
+    if not taller:
+        print(f"[!] Taller {taller_id} no encontrado en DB central.")
+        return {"status": "error", "mensaje": "Taller no registrado"}
+
+    hw_id = hw_id.strip()
+    device = db.query(models.Dispositivo).filter(models.Dispositivo.hw_id == hw_id).first()
+    
+    if not device:
+        count = db.query(models.Dispositivo).filter(models.Dispositivo.taller_id == taller_id).count()
+        limite = 1 if taller.plan == "Basico" else 5
+        if count >= limite:
+             return {"status": "limite_alcanzado", "mensaje": f"Límite de {limite} PCs alcanzado"}
+        device = models.Dispositivo(taller_id=taller_id, hw_id=hw_id, nombre_pc=pc_name)
+        db.add(device)
+    else:
+        device.taller_id = taller_id
+        device.ultima_conexion = datetime.datetime.utcnow()
+        device.nombre_pc = pc_name
+
+    db.commit()
+
+    if not taller.suscripcion_activa:
+        print(f"[🚫 KILL-SWITCH] Acceso BLOCK para Taller: {taller.nombre}")
+        return {"status": "suspendido", "mensaje": "Su suscripción ha sido SUSPENDIDA (Falta de Pago)."}
+
+    print(f"[✅ OK] Taller {taller.nombre} autorizado.")
+    return {"status": "activo", "taller_name": taller.nombre}
+
+@router.get("/v1/license/activate/{key}")
+def activate_license(key: str, hw_id: str, pc_name: str = "PC Nueva", db: Session = Depends(database.get_db)):
+    """Activación y vinculación inicial de Hardware"""
+    print(f"\n[✨ SaaS] SOLICITUD DE ACTIVACIÓN: Key={key} | PC={pc_name}")
+    taller = db.query(models.Taller).filter(models.Taller.activation_key == key).first()
+    if not taller:
+        raise HTTPException(status_code=403, detail="Llave inválida")
+    if not taller.suscripcion_activa:
+        raise HTTPException(status_code=403, detail="Esta llave está suspendida")
+
+    hw_id = hw_id.strip()
+    device = db.query(models.Dispositivo).filter(models.Dispositivo.hw_id == hw_id).first()
+    
+    if not device:
+        count = db.query(models.Dispositivo).filter(models.Dispositivo.taller_id == taller.id).count()
+        limite = 1 if taller.plan == "Basico" else 5
+        if count >= limite:
+            raise HTTPException(status_code=403, detail="Límite de PCs para esta licencia alcanzado")
+        device = models.Dispositivo(taller_id=taller.id, hw_id=hw_id, nombre_pc=pc_name)
+        db.add(device)
+    else:
+        device.taller_id = taller.id
+        device.nombre_pc = pc_name
+        device.ultima_conexion = datetime.datetime.utcnow()
+        
+    db.commit()
+    print(f"[🎉 ÉXITO] Licencia activada para: {taller.nombre}")
+    return {"taller_id": taller.id, "taller_name": taller.nombre, "status": "activo"}
+
+# ==========================================
 # GESTIÓN SaaS: DASHBOARD KPIs
 # ==========================================
 @router.get("/v1/dashboard/{taller_id}")
@@ -81,7 +146,7 @@ def get_registros(taller_id: int, db: Session = Depends(database.get_db)):
 import uuid
 from fastapi import Header
 
-ADMIN_SECRET = "tallerpro-admin-2026"
+ADMIN_SECRET = os.getenv("X_ADMIN_SECRET", "tallerpro-admin-2026")
 
 def _verificar_admin(x_admin_secret: str = Header(None)):
     if x_admin_secret != ADMIN_SECRET:
@@ -152,3 +217,31 @@ def admin_extender_taller(taller_id: int, db: Session = Depends(database.get_db)
     t.fecha_vencimiento += datetime.timedelta(days=30)
     db.commit()
     return {"id": t.id, "nombre": t.nombre, "fecha_vencimiento": str(t.fecha_vencimiento)}
+
+@router.get("/v1/admin/dispositivos/{taller_id}")
+def admin_listar_dispositivos(taller_id: int, db: Session = Depends(database.get_db),
+                               x_admin_secret: str = Header(None)):
+    _verificar_admin(x_admin_secret)
+    devs = db.query(models.Dispositivo).filter(models.Dispositivo.taller_id == taller_id).all()
+    return [
+        {
+            "id": d.id,
+            "hw_id": d.hw_id,
+            "nombre_pc": d.nombre_pc,
+            "ultima_conexion": str(d.ultima_conexion)
+        }
+        for d in devs
+    ]
+
+@router.delete("/v1/admin/dispositivo/{device_id}")
+def admin_borrar_dispositivo(device_id: int, db: Session = Depends(database.get_db),
+                              x_admin_secret: str = Header(None)):
+    _verificar_admin(x_admin_secret)
+    dev = db.query(models.Dispositivo).filter(models.Dispositivo.id == device_id).first()
+    if not dev:
+        raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+    db.delete(dev)
+    db.commit()
+    return {"status": "ok", "mensaje": "Dispositivo eliminado correctamente"}
+
+
